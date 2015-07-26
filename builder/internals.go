@@ -19,6 +19,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/net/context"
+
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/builder/parser"
 	"github.com/docker/docker/cliconfig"
@@ -513,7 +515,18 @@ func (b *builder) pullImage(name string) (*image.Image, error) {
 		OutStream:  ioutils.NopWriteCloser(b.OutOld),
 	}
 
-	if err := b.Daemon.Repositories().Pull(remote, tag, imagePullConfig); err != nil {
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	finished := make(chan struct{})
+	defer close(finished)
+	go func() {
+		select {
+		case <-b.cancelled:
+			cancel()
+		case <-finished:
+		}
+	}()
+
+	if err := b.Daemon.Repositories().Pull(cancelCtx, remote, tag, imagePullConfig); err != nil {
 		return nil, err
 	}
 

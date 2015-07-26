@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/context"
+
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/distribution/registry/client/transport"
 	"github.com/docker/docker/image"
@@ -27,7 +29,7 @@ type v1Puller struct {
 	session  *registry.Session
 }
 
-func (p *v1Puller) Pull(tag string) (fallback bool, err error) {
+func (p *v1Puller) Pull(ctx context.Context, tag string) (fallback bool, err error) {
 	if utils.DigestReference(tag) {
 		// Allowing fallback, because HTTPS v1 is before HTTP v2
 		return true, registry.ErrNoSupport{errors.New("Cannot pull by digest with v1 registry")}
@@ -55,14 +57,14 @@ func (p *v1Puller) Pull(tag string) (fallback bool, err error) {
 		logrus.Debugf("Fallback from error: %s", err)
 		return true, err
 	}
-	if err := p.pullRepository(tag); err != nil {
+	if err := p.pullRepository(ctx, tag); err != nil {
 		// TODO(dmcgowan): Check if should fallback
 		return false, err
 	}
 	return false, nil
 }
 
-func (p *v1Puller) pullRepository(askedTag string) error {
+func (p *v1Puller) pullRepository(ctx context.Context, askedTag string) error {
 	out := p.config.OutStream
 	out.Write(p.sf.FormatStatus("", "Pulling repository %s", p.repoInfo.CanonicalName))
 

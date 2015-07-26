@@ -6,6 +6,8 @@ import (
 	"io/ioutil"
 	"os"
 
+	"golang.org/x/net/context"
+
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/distribution"
 	"github.com/docker/distribution/digest"
@@ -18,7 +20,6 @@ import (
 	"github.com/docker/docker/trust"
 	"github.com/docker/docker/utils"
 	"github.com/docker/libtrust"
-	"golang.org/x/net/context"
 )
 
 type v2Puller struct {
@@ -31,7 +32,7 @@ type v2Puller struct {
 	sessionID string
 }
 
-func (p *v2Puller) Pull(tag string) (fallback bool, err error) {
+func (p *v2Puller) Pull(ctx context.Context, tag string) (fallback bool, err error) {
 	// TODO(tiborvass): was ReceiveTimeout
 	p.repo, err = NewV2Repository(p.repoInfo, p.endpoint, p.config.MetaHeaders, p.config.AuthConfig)
 	if err != nil {
@@ -41,7 +42,7 @@ func (p *v2Puller) Pull(tag string) (fallback bool, err error) {
 
 	p.sessionID = stringid.GenerateRandomID()
 
-	if err := p.pullV2Repository(tag); err != nil {
+	if err := p.pullV2Repository(ctx, tag); err != nil {
 		if registry.ContinueOnError(err) {
 			logrus.Debugf("Error trying v2 registry: %v", err)
 			return true, err
@@ -51,7 +52,7 @@ func (p *v2Puller) Pull(tag string) (fallback bool, err error) {
 	return false, nil
 }
 
-func (p *v2Puller) pullV2Repository(tag string) (err error) {
+func (p *v2Puller) pullV2Repository(ctx context.Context, tag string) (err error) {
 	var tags []string
 	taggedName := p.repoInfo.LocalName
 	if len(tag) > 0 {
@@ -115,7 +116,7 @@ type errVerification struct{}
 
 func (errVerification) Error() string { return "verification failed" }
 
-func (p *v2Puller) download(di *downloadInfo) {
+func (p *v2Puller) download(ctx context.Context, di *downloadInfo) {
 	logrus.Debugf("pulling blob %q to %s", di.digest, di.img.ID)
 
 	out := p.config.OutStream
@@ -139,9 +140,9 @@ func (p *v2Puller) download(di *downloadInfo) {
 		return
 	}
 
-	blobs := p.repo.Blobs(nil)
+	blobs := p.repo.Blobs(ctx)
 
-	desc, err := blobs.Stat(nil, di.digest)
+	desc, err := blobs.Stat(ctx, di.digest)
 	if err != nil {
 		logrus.Debugf("Error statting layer: %v", err)
 		di.err <- err
@@ -149,7 +150,7 @@ func (p *v2Puller) download(di *downloadInfo) {
 	}
 	di.size = desc.Size
 
-	layerDownload, err := blobs.Open(nil, di.digest)
+	layerDownload, err := blobs.Open(ctx, di.digest)
 	if err != nil {
 		logrus.Debugf("Error fetching layer: %v", err)
 		di.err <- err
@@ -241,7 +242,7 @@ func (p *v2Puller) pullV2Tag(tag, taggedName string) (bool, error) {
 		out.Write(p.sf.FormatProgress(stringid.TruncateID(img.ID), "Pulling fs layer", nil))
 
 		downloads[i].err = make(chan error)
-		go p.download(&downloads[i])
+		go p.download(context.TODO(), &downloads[i])
 	}
 
 	var tagUpdated bool

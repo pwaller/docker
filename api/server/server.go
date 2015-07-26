@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"golang.org/x/net/context"
 	"golang.org/x/net/websocket"
 
 	"github.com/Sirupsen/logrus"
@@ -720,6 +721,23 @@ func (s *Server) postCommit(version version.Version, w http.ResponseWriter, r *h
 	})
 }
 
+// Returns a cancelation context which is cancelled if the requestor goes away.
+func WithRequestCancel(w http.ResponseWriter, ctx context.Context) (context.Context, func()) {
+	newCtx, cancel := context.WithCancel(ctx)
+
+	finished := make(chan struct{})
+	go func() {
+		remoteGone := w.(http.CloseNotifier).CloseNotify()
+		select {
+		case <-remoteGone:
+			cancel()
+		case <-finished:
+		}
+	}()
+
+	return newCtx, func() { close(finished) }
+}
+
 // Creates an image from Pull or from Import
 func (s *Server) postImagesCreate(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
@@ -749,6 +767,9 @@ func (s *Server) postImagesCreate(version version.Version, w http.ResponseWriter
 
 	w.Header().Set("Content-Type", "application/json")
 
+	pullCtx, done := WithRequestCancel(w, context.Background())
+	defer done()
+
 	if image != "" { //pull
 		if tag == "" {
 			image, tag = parsers.ParseRepositoryTag(image)
@@ -766,7 +787,7 @@ func (s *Server) postImagesCreate(version version.Version, w http.ResponseWriter
 			OutStream:   output,
 		}
 
-		err = s.daemon.Repositories().Pull(image, tag, imagePullConfig)
+		err = s.daemon.Repositories().Pull(pullCtx, image, tag, imagePullConfig)
 	} else { //import
 		if tag == "" {
 			repo, tag = parsers.ParseRepositoryTag(repo)

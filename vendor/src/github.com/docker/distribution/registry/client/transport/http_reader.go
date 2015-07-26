@@ -9,6 +9,8 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+
+	"golang.org/x/net/context"
 )
 
 // ReadSeekCloser combines io.ReadSeeker with io.Closer.
@@ -21,7 +23,7 @@ type ReadSeekCloser interface {
 // request. When seeking and starting a read from a non-zero offset
 // the a "Range" header will be added which sets the offset.
 // TODO(dmcgowan): Move this into a separate utility package
-func NewHTTPReadSeeker(client *http.Client, url string, size int64) ReadSeekCloser {
+func NewHTTPReadSeeker(ctx context.Context, client *http.Client, url string, size int64) ReadSeekCloser {
 	return &httpReadSeeker{
 		client: client,
 		url:    url,
@@ -145,8 +147,36 @@ func (hrs *httpReadSeeker) reader() (io.Reader, error) {
 
 		// If we are at different offset, issue a range request from there.
 		req.Header.Add("Range", "1-")
-		// TODO: get context in here
 		// context.GetLogger(hrs.context).Infof("Range: %s", req.Header.Get("Range"))
+	}
+
+	// Pull this in from outside.
+	ctx := context.TODO()
+
+	if requestCanceler, ok := hrs.client.Transport.(requestCanceler); ok {
+		reqDone := make(chan struct{})
+		defer close(reqDone)
+
+		// Pattern copied from
+		// https://github.com/golang/go/blob/master/src/net/http/httputil/reverseproxy.go
+		req.Body = struct {
+			io.Reader
+			io.Closer
+		}{
+			Reader: &runOnFirstRead{
+				Reader: req.Body,
+				fn: func() {
+					go func() {
+						select {
+						case <-ctx.Done():
+							requestCanceler.CancelRequest(req)
+						case <-reqDone:
+						}
+					}()
+				},
+			},
+			Closer: req.Body,
+		}
 	}
 
 	resp, err := hrs.client.Do(req)
@@ -169,4 +199,25 @@ func (hrs *httpReadSeeker) reader() (io.Reader, error) {
 	}
 
 	return hrs.brd, nil
+}
+
+type requestCanceler interface {
+	CancelRequest(*http.Request)
+}
+
+type runOnFirstRead struct {
+	io.Reader
+
+	fn func() // Run before first Read, then set to nil
+}
+
+func (c *runOnFirstRead) Read(bs []byte) (int, error) {
+	if c.fn != nil {
+		c.fn()
+		c.fn = nil
+	}
+	if c.Reader == nil {
+		return 0, io.EOF
+	}
+	return c.Reader.Read(bs)
 }

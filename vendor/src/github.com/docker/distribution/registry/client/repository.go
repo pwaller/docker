@@ -420,7 +420,7 @@ func (bs *blobs) Open(ctx context.Context, dgst digest.Digest) (distribution.Rea
 		return nil, err
 	}
 
-	return transport.NewHTTPReadSeeker(bs.client, blobURL, stat.Size), nil
+	return transport.NewHTTPReadSeeker(ctx, bs.client, blobURL, stat.Size), nil
 }
 
 func (bs *blobs) ServeBlob(ctx context.Context, w http.ResponseWriter, r *http.Request, dgst digest.Digest) error {

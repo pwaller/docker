@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 
+	"golang.org/x/net/context"
+
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/cliconfig"
 	"github.com/docker/docker/pkg/streamformatter"
@@ -22,7 +24,7 @@ type Puller interface {
 	// Pull returns an error if any, as well as a boolean that determines whether to retry Pull on the next configured endpoint.
 	//
 	// TODO(tiborvass): have Pull() take a reference to repository + tag, so that the puller itself is repository-agnostic.
-	Pull(tag string) (fallback bool, err error)
+	Pull(ctx context.Context, tag string) (fallback bool, err error)
 }
 
 func NewPuller(s *TagStore, endpoint registry.APIEndpoint, repoInfo *registry.RepositoryInfo, imagePullConfig *ImagePullConfig, sf *streamformatter.StreamFormatter) (Puller, error) {
@@ -47,7 +49,7 @@ func NewPuller(s *TagStore, endpoint registry.APIEndpoint, repoInfo *registry.Re
 	return nil, fmt.Errorf("unknown version %d for registry %s", endpoint.Version, endpoint.URL)
 }
 
-func (s *TagStore) Pull(image string, tag string, imagePullConfig *ImagePullConfig) error {
+func (s *TagStore) Pull(ctx context.Context, image string, tag string, imagePullConfig *ImagePullConfig) error {
 	var sf = streamformatter.NewJSONStreamFormatter()
 
 	// Resolve the Repository name from fqn to RepositoryInfo
@@ -97,7 +99,7 @@ func (s *TagStore) Pull(image string, tag string, imagePullConfig *ImagePullConf
 			lastErr = err
 			continue
 		}
-		if fallback, err := puller.Pull(tag); err != nil {
+		if fallback, err := puller.Pull(ctx, tag); err != nil {
 			if fallback {
 				if _, ok := err.(registry.ErrNoSupport); !ok {
 					// Because we found an error that's not ErrNoSupport, discard all subsequent ErrNoSupport errors.
